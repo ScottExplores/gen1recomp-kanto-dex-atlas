@@ -12,6 +12,12 @@ local MAP_SCREEN = "KantoDexAtlasMap"
 
 local KANTO_DEX_SIZE = 151
 
+-- ListMenu paints labels from x=16 and right values against x=152.  Keep one
+-- full 8px glyph between the two columns inside that 136px content span.
+local DETAIL_CONTENT_WIDTH = 136
+local DETAIL_COLUMN_GAP = 8
+local DETAIL_RIGHT_MAX_WIDTH = 48
+
 -- Non-random acquisitions that are not represented by Data.encounters.
 -- These are stable vanilla Kanto story placements; encounter mods can add a
 -- random location for the same species and both sources will be shown.
@@ -31,6 +37,11 @@ local SPECIAL = {
 local KIND_CODE = {
   GRASS = "G", WATER = "W", OLD_ROD = "R", GOOD_ROD = "R",
   SUPER_ROD = "R", GIFT = "GF", PRIZE = "PR", STATIC = "ST",
+}
+
+local EVOLUTION_ITEM_CODE = {
+  FIRE_STONE = "FIRE", WATER_STONE = "WATR", THUNDER_STONE = "THND",
+  LEAF_STONE = "LEAF", MOON_STONE = "MOON",
 }
 
 local function copyArray(source)
@@ -58,6 +69,57 @@ local function displayName(name)
     name = name:gsub(replacement[1], replacement[2])
   end
   return name
+end
+
+-- Remove one UTF-8 codepoint without assuming Lua 5.3's utf8 library.  Atlas
+-- text is normally ASCII, but this keeps translated/species names intact.
+local function dropLastCharacter(text)
+  local first = #text
+  while first > 1 do
+    local byte = text:byte(first)
+    if not byte or byte < 0x80 or byte > 0xBF then break end
+    first = first - 1
+  end
+  return text:sub(1, first - 1)
+end
+
+local function clipPixels(Font, text, maxWidth, keepFloor)
+  text = tostring(text or "")
+  if maxWidth <= 0 then return "" end
+  if Font.width(text) <= maxWidth then return text end
+
+  local suffix = "."
+  if Font.width(suffix) > maxWidth then return "" end
+
+  -- Indoor encounter tables often differ only by floor.  Retain that final
+  -- 3F/B1F token so clipped POKEMON TOWER rows remain distinguishable.
+  local floor = keepFloor and text:match(" ([B]?%d+F)$")
+  if floor then
+    local floorSuffix = ". " .. floor
+    local prefix = text:sub(1, #text - #floor - 1)
+    while prefix ~= "" and Font.width(prefix .. floorSuffix) > maxWidth do
+      prefix = dropLastCharacter(prefix)
+    end
+    if prefix ~= "" then return prefix .. floorSuffix end
+  end
+
+  repeat
+    text = dropLastCharacter(text)
+  until text == "" or Font.width(text .. suffix) <= maxWidth
+  return text .. suffix
+end
+
+local function detailItem(Font, label, right, value)
+  right = clipPixels(Font, right, DETAIL_RIGHT_MAX_WIDTH)
+  local labelWidth = DETAIL_CONTENT_WIDTH
+  if right ~= "" then
+    labelWidth = labelWidth - DETAIL_COLUMN_GAP - Font.width(right)
+  end
+  return {
+    label = clipPixels(Font, label, labelWidth, true),
+    right = right ~= "" and right or nil,
+    value = value,
+  }
 end
 
 local function townMapLocations(game)
@@ -277,9 +339,10 @@ local function evolutionLabel(evolution)
   if evolution.method == "LEVEL" and evolution.level then
     return "L" .. tostring(evolution.level)
   elseif evolution.method == "ITEM" then
-    return prettyId(evolution.item or "STONE")
+    return EVOLUTION_ITEM_CODE[evolution.item]
+      or prettyId(evolution.item or "STONE")
   elseif evolution.method == "TRADE" then
-    return "TRADE"
+    return "TRAD"
   end
   return prettyId(evolution.method or "EVOLVE")
 end
@@ -437,37 +500,31 @@ return function(mod)
   mod.content.screens:register(DETAIL_SCREEN, {
     new = function(game, species)
       local atlas = buildAtlas(mod, game)
+      local Font = mod.ui.Font
       local definition = (game.data.pokemon or {})[species]
       local name = (definition and definition.name) or species
       local items = {}
       local mapSpecies = sourceMapSpecies(atlas, species)
 
       if mapSpecies then
-        items[#items + 1] = {
-          label = mapSpecies == species and "AREA MAP" or "SOURCE AREA MAP",
-          right = mapSpecies == species and "A" or prettyId(mapSpecies),
-          value = { kind = "map" },
-        }
+        local mapLabel = mapSpecies == species and "AREA MAP"
+          or (displayName(mapSpecies) .. " MAP")
+        items[#items + 1] = detailItem(Font, mapLabel, "A", { kind = "map" })
       end
 
       for _, source in ipairs(atlas.sources[species] or {}) do
-        items[#items + 1] = {
-          label = displayName(source.name),
-          right = acquisitionLabel(source),
-          value = { kind = "source", source = source },
-        }
+        items[#items + 1] = detailItem(Font, displayName(source.name),
+          acquisitionLabel(source), { kind = "source", source = source })
       end
 
       for _, evolution in ipairs(atlas.incoming[species] or {}) do
-        items[#items + 1] = {
-          label = evolution.name,
-          right = "E:" .. evolutionLabel(evolution),
-          value = { kind = "evolution", species = evolution.species },
-        }
+        items[#items + 1] = detailItem(Font, evolution.name,
+          "E:" .. evolutionLabel(evolution),
+          { kind = "evolution", species = evolution.species })
       end
 
       if #items == 0 then
-        items[1] = { label = "LOCATION UNKNOWN", right = "-" }
+        items[1] = detailItem(Font, "LOCATION UNKNOWN", "-")
       end
 
       return mod.ui.ListMenu.new(game, name, items, {

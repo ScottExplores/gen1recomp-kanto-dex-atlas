@@ -15,6 +15,9 @@ local root = assert(os.getenv("KANTO_DEX_TEST_ROOT"),
   "KANTO_DEX_TEST_ROOT is required")
 
 Data:load()
+_G.love = require("tests.love_stub")
+local Font = require("src.render.Font")
+Font.load(Data)
 Screens.invalidate()
 
 local run = T.sdk.loadMods({
@@ -120,8 +123,61 @@ T.check(type(list.onCancel) == "function", "B can restore the Start menu")
 local detailFactory = Screens.get(game, "KantoDexAtlasDetail")
 local detail = detailFactory.new(game, "VENUSAUR")
 T.eq(detail.title, "VENUSAUR", "detail screen uses the species name")
-T.eq(detail.items[1].label, "SOURCE AREA MAP",
-  "evolution-only species exposes its ancestor map")
+T.eq(detail.items[1].label, "BULBASAUR MAP",
+  "evolution-only species names its ancestor map compactly")
+T.eq(detail.items[1].right, "A", "the map row keeps a clear action hint")
+
+local raichuDetail = detailFactory.new(game, "RAICHU")
+local pikachuEvolution
+for _, item in ipairs(raichuDetail.items) do
+  local value = item.value
+  if type(value) == "table" and value.kind == "evolution"
+      and value.species == "PIKACHU" then
+    pikachuEvolution = item
+    break
+  end
+end
+T.eq(pikachuEvolution and pikachuEvolution.right, "E:THND",
+  "stone evolutions retain a readable compact method")
+
+local towerLabels = {}
+for _, item in ipairs(detailFactory.new(game, "GASTLY").items) do
+  local value = item.value
+  local source = type(value) == "table" and value.source
+  if type(source) == "table"
+      and tostring(source.mapId):match("^POKEMON_TOWER_[2-7]F$") then
+    towerLabels[source.mapId] = item.label
+  end
+end
+T.check(towerLabels.POKEMON_TOWER_3F
+    and towerLabels.POKEMON_TOWER_3F:match(" 3F$")
+    and towerLabels.POKEMON_TOWER_7F
+    and towerLabels.POKEMON_TOWER_7F:match(" 7F$")
+    and towerLabels.POKEMON_TOWER_3F ~= towerLabels.POKEMON_TOWER_7F,
+  "clipped indoor locations preserve distinct floor suffixes")
+
+-- ListMenu draws a label at x=16 and right-aligns its companion against
+-- x=152.  At 160px wide, <=128 combined pixels guarantees an 8px gutter.
+-- Build every species detail screen so future encounter/evolution names
+-- cannot silently reintroduce overpainting in a less common row.
+local widthViolation
+for _, row in ipairs(atlas.species) do
+  local speciesDetail = detailFactory.new(game, row.id)
+  for _, item in ipairs(speciesDetail.items) do
+    local labelWidth = Font.width(item.label or "")
+    local rightWidth = item.right and Font.width(item.right) or 0
+    local limit = item.right and 128 or 136
+    if labelWidth + rightWidth > limit or rightWidth > 48 then
+      widthViolation = ("%s: %s | %s (%d+%dpx)"):format(row.id,
+        tostring(item.label), tostring(item.right), labelWidth, rightWidth)
+      break
+    end
+  end
+  if widthViolation then break end
+end
+T.check(not widthViolation,
+  "all 151 detail screens preserve the 8px column gutter: "
+    .. tostring(widthViolation))
 
 local mapFactory = Screens.get(game, "KantoDexAtlasMap")
 local habitat = mapFactory.new(game, {
@@ -138,8 +194,6 @@ T.check(#fishingMap.markers > 0,
 -- Exercise the production draw path with the engine's graphics stub. This
 -- catches bad tile, quad, Font, and marker calls without distributing or
 -- screenshotting the ROM-generated Town Map asset.
-_G.love = require("tests.love_stub")
-require("src.render.Font").load(Data)
 local renderedMap = mapFactory.new(game, {
   species = "MEW", sourceSpecies = "MEW", atlas = atlas,
 })
