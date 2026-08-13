@@ -1,0 +1,23 @@
+{
+  "id": "kanto_dex_atlas",
+  "name": "Kanto Dex Atlas",
+  "version": "0.1.0",
+  "github": "ScottExplores/gen1recomp-kanto-dex-atlas",
+  "api": 2,
+  "entry": "main.lua",
+  "profile": "content",
+  "category": "TOOL",
+  "game_version": "0.0.0-dev || >=0.1.75 <2.0.0",
+  "priority": 500,
+  "dependencies": [],
+  "optional_dependencies": [
+    "all_pokemon_catchable_151_mod"
+  ],
+  "conflicts": [],
+  "incompatible": [],
+  "games": ["red", "blue", "yellow"],
+  "experimental": false,
+  "permissions": [],
+  "affects_link": false,
+  "description": "Adds an all-151 Dex Atlas to the Start menu with caught status, acquisition hints, location lists, and live encounter markers on the Kanto map."
+}
